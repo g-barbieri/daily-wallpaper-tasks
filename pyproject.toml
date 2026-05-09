@@ -1,0 +1,14 @@
+[project]
+name = "daily-wallpaper-tasks"
+version = "0.1.0"
+description = "Generate a daily wallpaper from tasks and apply it on Windows."
+requires-python = ">=3.11"
+dependencies = [
+    "pillow>=10.0.0",
+]
+
+[project.scripts]
+daily-wallpaper = "src.main:main"
+
+[tool.ruff]
+line-length = 100
