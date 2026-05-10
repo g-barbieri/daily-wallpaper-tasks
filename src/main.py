@@ -4,6 +4,7 @@ import argparse
 import ctypes
 import json
 from datetime import date
+import math
 from pathlib import Path
 import re
 
@@ -15,6 +16,10 @@ CONFIG_FILE = ROOT / "config.json"
 OUTPUT_DIR = ROOT / "output"
 
 
+SECTION_PATTERN = re.compile(r"^\s{0,3}(#{2,4})\s+(.*?)\s*$")
+TASK_PATTERN = re.compile(r"^\s*[-*]\s+\[( |x|X)\]\s*(.*)$")
+
+
 def load_config(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -24,46 +29,53 @@ def resolve_daily_note(config: dict) -> Path:
     return vault_path / config.get("source_note", "Today.md")
 
 
-def load_sections_from_note(path: Path, headings: list[str], task_markers: list[str]) -> dict[str, list[dict[str, str]]]:
+def load_sections_from_note(
+    path: Path,
+    fallback_headings: list[str],
+    task_markers: list[str],
+) -> list[dict[str, object]]:
     if not path.exists():
-        return {heading: [] for heading in headings}
+        return [{"heading": heading, "items": []} for heading in fallback_headings]
 
-    lines = path.read_text(encoding="utf-8").splitlines()
-    heading_map = {heading.lower(): heading for heading in headings}
-    heading_matchers = {
-        heading.lower(): re.compile(rf"^\s*{re.escape(heading)}\s*$", re.IGNORECASE)
-        for heading in headings
-    }
-    sections: dict[str, list[dict[str, str]]] = {heading: [] for heading in headings}
-    current_heading: str | None = None
+    del task_markers
 
-    for line in lines:
-        matched_heading = None
-        for key, matcher in heading_matchers.items():
-            if matcher.match(line):
-                matched_heading = heading_map[key]
-                break
+    sections: list[dict[str, object]] = []
+    section_lookup: dict[str, dict[str, object]] = {}
+    current_section: dict[str, object] | None = None
 
-        if matched_heading is not None:
-            current_heading = matched_heading
+    for line in path.read_text(encoding="utf-8").splitlines():
+        heading_match = SECTION_PATTERN.match(line)
+        if heading_match:
+            heading_text = heading_match.group(2).strip()
+            current_section = section_lookup.get(heading_text.lower())
+            if current_section is None:
+                current_section = {"heading": heading_text, "items": []}
+                section_lookup[heading_text.lower()] = current_section
+                sections.append(current_section)
             continue
 
-        if current_heading and line.startswith("#"):
-            current_heading = None
+        if current_section is None:
             continue
 
-        if current_heading:
-            stripped = line.strip()
-            for marker in task_markers:
-                if stripped.startswith(marker):
-                    task = stripped[len(marker) :].strip()
-                    if task:
-                        checked = False
-                        if task.startswith("[x] "):
-                            checked = True
-                            task = task[4:].strip()
-                        sections[current_heading].append({"text": task, "checked": "true" if checked else "false"})
-                    break
+        task_match = TASK_PATTERN.match(line)
+        if not task_match:
+            continue
+
+        task_text = task_match.group(2).strip()
+        if not task_text:
+            continue
+
+        items = current_section["items"]
+        assert isinstance(items, list)
+        items.append(
+            {
+                "text": task_text,
+                "checked": task_match.group(1).lower() == "x",
+            }
+        )
+
+    if not sections:
+        return [{"heading": heading, "items": []} for heading in fallback_headings]
 
     return sections
 
@@ -101,7 +113,25 @@ def wrap_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, m
     return lines or [text]
 
 
-def build_wallpaper(sections: dict[str, list[dict[str, str]]], output_path: Path) -> Path:
+def section_grid(section_count: int) -> tuple[int, int]:
+    if section_count <= 1:
+        return 1, 1
+    if section_count <= 4:
+        return 2, math.ceil(section_count / 2)
+    return 3, math.ceil(section_count / 3)
+
+
+def first_open_task(sections: list[dict[str, object]]) -> str:
+    for section in sections:
+        items = section["items"]
+        assert isinstance(items, list)
+        for item in items:
+            if not bool(item["checked"]):
+                return str(item["text"])
+    return "Write the most important thing first."
+
+
+def build_wallpaper(sections: list[dict[str, object]], output_path: Path) -> Path:
     width, height = 1920, 1080
     background = "#08111f"
     panel = "#101b2f"
@@ -129,46 +159,66 @@ def build_wallpaper(sections: dict[str, list[dict[str, str]]], output_path: Path
     draw.text((width - 510, 108), "Obsidian dashboard", fill=muted, font=small_font)
     draw.line((110, 222, width - 110, 222), fill="#22304b", width=2)
 
-    columns = [
-        ("## Priorities", accent2, (90, 270, 620, 980)),
-        ("## Errands", accent3, (650, 270, 1180, 980)),
-        ("## Today", accent, (1210, 270, 1830, 980)),
-    ]
+    columns, rows = section_grid(max(len(sections), 1))
+    gap_x = 30
+    gap_y = 30
+    start_x = 90
+    start_y = 270
+    footer_y = 1000
+    card_width = (width - (start_x * 2) - gap_x * (columns - 1)) // columns
+    card_height = (footer_y - start_y - gap_y * (rows - 1)) // rows
+    accent_colors = [accent2, accent3, accent, "#fb7185", "#34d399", "#f97316"]
 
-    for heading, color, box in columns:
-        left, top, right, bottom = box
-        draw_round_box(draw, box, panel_soft, 28)
-        draw.text((left + 28, top + 24), heading.removeprefix("## ").strip(), fill=color, font=section_font)
+    for index, section in enumerate(sections):
+        row = index // columns
+        column = index % columns
+        left = start_x + column * (card_width + gap_x)
+        top = start_y + row * (card_height + gap_y)
+        right = left + card_width
+        bottom = top + card_height
+
+        draw_round_box(draw, (left, top, right, bottom), panel_soft, 28)
+
+        heading_text = str(section["heading"])
+        items = section["items"]
+        assert isinstance(items, list)
+        color = accent_colors[index % len(accent_colors)]
+        draw.text((left + 28, top + 24), heading_text, fill=color, font=section_font)
         draw.line((left + 28, top + 74, right - 28, top + 74), fill="#25344f", width=2)
 
-        items = sections.get(heading, [])
         if not items:
             draw.text((left + 30, top + 110), "Nothing listed.", fill=muted, font=body_font)
             continue
 
         y = top + 110
-        for item in items[:6]:
-            text = item["text"]
-            lines = wrap_text(draw, text, body_font, right - left - 90)
-            checkbox = "☑" if item["checked"] == "true" else "☐"
+        for item in items[:8]:
+            task_text = str(item["text"])
+            task_lines = wrap_text(draw, task_text, body_font, right - left - 90)
+            checked = bool(item["checked"])
+            checkbox = "☑" if checked else "☐"
             line_height = 36
-            draw.text((left + 30, y), checkbox, fill=color if item["checked"] == "false" else muted, font=section_font)
+            draw.text((left + 30, y), checkbox, fill=color if not checked else muted, font=section_font)
             text_y = y + 3
-            for line in lines[:3]:
-                draw.text((left + 74, text_y), line, fill=foreground if item["checked"] == "false" else muted, font=body_font)
+            for line in task_lines[:3]:
+                draw.text((left + 74, text_y), line, fill=foreground if not checked else muted, font=body_font)
                 text_y += line_height
             y = text_y + 18
             if y > bottom - 70:
                 break
 
-    draw.text((90, 1000), "Keep the note focused: one line per task, grouped under Priorities, Errands, and Today.", fill=muted, font=small_font)
+    draw.text(
+        (90, 1000),
+        "Keep the note focused: one line per task, grouped into the sections you actually use.",
+        fill=muted,
+        font=small_font,
+    )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(output_path)
     return output_path
 
 
-def build_companion_wallpaper(sections: dict[str, list[dict[str, str]]], output_path: Path) -> Path:
+def build_companion_wallpaper(sections: list[dict[str, object]], output_path: Path) -> Path:
     width, height = 1920, 1080
     background = "#09101d"
     panel = "#0f1727"
@@ -188,9 +238,10 @@ def build_companion_wallpaper(sections: dict[str, list[dict[str, str]]], output_
     draw.text((120, 190), "Keep the main screen busy. Keep this one calm.", fill=muted, font=small_font)
 
     summary_lines = []
-    for heading in ("## Priorities", "## Errands", "## Today"):
-        total = len(sections.get(heading, []))
-        summary_lines.append(f"{heading.removeprefix('## ').strip()}: {total}")
+    for section in sections:
+        items = section["items"]
+        assert isinstance(items, list)
+        summary_lines.append(f"{section['heading']}: {len(items)}")
 
     y = 320
     for line in summary_lines:
@@ -199,12 +250,7 @@ def build_companion_wallpaper(sections: dict[str, list[dict[str, str]]], output_
 
     draw_round_box(draw, (120, 600, width - 120, 860), "#0b1423", 32)
     draw.text((160, 650), "One sentence for the day", fill=muted, font=small_font)
-    top_priority = sections.get("## Priorities", [])[:1]
-    if top_priority:
-        text = top_priority[0]["text"]
-    else:
-        text = "Write the most important thing first."
-    draw.text((160, 700), text, fill=foreground, font=body_font)
+    draw.text((160, 700), first_open_task(sections), fill=foreground, font=body_font)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(output_path)
@@ -231,7 +277,7 @@ def main() -> int:
     note_path = Path(args.note_path) if args.note_path else resolve_daily_note(config)
     sections = load_sections_from_note(
         note_path,
-        config.get("note_headings", ["## Priorities", "## Errands", "## Today"]),
+        config.get("note_headings", ["Priorities", "Errands", "Today"]),
         list(config.get("task_markers", ["- [ ]", "* [ ]"])),
     )
     primary_path = OUTPUT_DIR / "today-main.png"

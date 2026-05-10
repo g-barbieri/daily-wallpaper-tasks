@@ -1,6 +1,6 @@
 # Daily Wallpaper Tasks
 
-Generate a Windows wallpaper from today's Obsidian daily note and set it as the desktop background.
+Generate a Windows wallpaper from your Obsidian task note and set it as the desktop background.
 
 ## Layout
 
@@ -40,10 +40,22 @@ Or from PowerShell:
 ## Obsidian note format
 
 ```md
-## Today
+## Priorities
+- [ ] First task
+- [ ] Second task
+
+## Errands
+- [ ] Buy groceries
+
+## Later
+- [ ] Research one idea
+
+## Fun
 - [ ] First task
 - [ ] Second task
 ```
+
+The program reads every `##` or `###` section in `Today.md` and turns each section into a card on the wallpaper.
 
 Default source note:
 
