@@ -1,20 +1,22 @@
 # Daily Wallpaper Tasks
 
-Generate a Windows wallpaper from your Obsidian task note and set it as the desktop background.
+Obsidian-powered Windows wallpapers for task planning. The app turns your `Today.md` note into a desktop dashboard and a second calm companion wallpaper.
 
-## Layout
+## Preview
 
-- `config.json`: vault and note settings
-- `output/`: generated wallpaper images
-- `src/`: generation and wallpaper-setting code
+![Main wallpaper](docs/preview-main.png)
 
-## Next steps
+![Companion wallpaper](docs/preview-companion.png)
 
-1. Edit your Obsidian daily note
-2. Run the generator
-3. Schedule it with Task Scheduler
+## What It Does
 
-## Run
+- Reads tasks from `C:\Users\User\Documents\Obsidian Vault\Today.md`
+- Renders each note section as a visual card
+- Generates two wallpapers: a main task board and a minimal second-screen view
+- Can apply the main wallpaper directly to Windows
+- Supports a daily Task Scheduler job and a desktop shortcut for on-demand refresh
+
+## Quick Start
 
 ```powershell
 python -m src.main --set-wallpaper
@@ -26,18 +28,9 @@ Test only, no wallpaper change:
 python -m src.main
 ```
 
-This generates:
+## Note Format
 
-- `output/today-main.png`
-- `output/today-companion.png`
-
-Or from PowerShell:
-
-```powershell
-.\\scripts\\run-wallpaper.ps1
-```
-
-## Obsidian note format
+Use headings like these in `Today.md`:
 
 ```md
 ## Priorities
@@ -57,28 +50,28 @@ Or from PowerShell:
 
 The program reads every `##` or `###` section in `Today.md` and turns each section into a card on the wallpaper.
 
-Default source note:
+## Automation
 
-```text
-Today.md
-```
-
-## Schedule
-
-Run `scripts\\install-task.ps1` to create a daily Task Scheduler job.
+Create the daily scheduled task:
 
 ```powershell
-.\\scripts\\install-task.ps1
+.\scripts\install-task.ps1
 ```
 
-By default it runs every day at `08:00` and launches the wallpaper refresh script in a hidden PowerShell window.
-
-If you want a different time:
+Remove it cleanly later:
 
 ```powershell
-.\\scripts\\install-task.ps1 -Time 07:30
+.\scripts\uninstall-task.ps1
 ```
 
-## Desktop Shortcut
+Create or refresh the desktop shortcut:
 
-Run `scripts\\create-shortcut.ps1` to create a desktop shortcut named `Update Today Wallpaper.lnk`.
+```powershell
+.\scripts\create-shortcut.ps1
+```
+
+## Configuration
+
+- `config.json`: vault path, note name, headings, and task markers
+- `src/main.py`: parsing, layout, rendering, and wallpaper setting
+- `output/`: generated wallpaper images
