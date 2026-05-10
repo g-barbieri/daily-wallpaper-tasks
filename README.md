@@ -65,7 +65,19 @@ Today.md
 
 ## Schedule
 
-Use Windows Task Scheduler to run `scripts\\run-wallpaper.ps1` once per day, ideally in the morning.
+Run `scripts\\install-task.ps1` to create a daily Task Scheduler job.
+
+```powershell
+.\\scripts\\install-task.ps1
+```
+
+By default it runs every day at `08:00` and launches the wallpaper refresh script in a hidden PowerShell window.
+
+If you want a different time:
+
+```powershell
+.\\scripts\\install-task.ps1 -Time 07:30
+```
 
 ## Desktop Shortcut
 
