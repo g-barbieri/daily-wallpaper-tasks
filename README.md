@@ -1,6 +1,6 @@
 # Daily Wallpaper Tasks
 
-Obsidian-powered Windows wallpapers for task planning. The app turns your `Today.md` note into a desktop dashboard and a second calm companion wallpaper.
+Obsidian-powered Windows wallpapers for task planning. The app turns your `Today.md` note into a desktop dashboard and a second calm companion wallpaper when Windows detects more than one monitor.
 
 ## Preview
 
@@ -21,6 +21,7 @@ If you add a GIF later, put it here. A short 5 to 10 second screen recording sho
 - Generates two wallpapers: a main task board and a minimal second-screen view
 - Can apply the main wallpaper directly to Windows
 - Supports a daily Task Scheduler job and a desktop shortcut for on-demand refresh
+- Automatically applies the companion wallpaper to extra monitors when present
 
 ## How It Works
 
@@ -94,6 +95,7 @@ Create or refresh the desktop shortcut:
 - `config.json`: vault path, note name, headings, and task markers
 - `src/main.py`: parsing, layout, rendering, and wallpaper setting
 - `output/`: generated wallpaper images
+- `companion_message` in `config.json`: placeholder text for the second monitor until you decide what to show there
 
 ## Troubleshooting
 
@@ -102,3 +104,4 @@ Create or refresh the desktop shortcut:
 - If Task Scheduler does not run, reinstall it with `.\scripts\install-task.ps1` and check the task name `Daily Wallpaper Tasks`.
 - If the desktop shortcut does nothing, recreate it with `.\scripts\create-shortcut.ps1`.
 - If you use a different vault path, update `config.json` before scheduling anything.
+- If you only have one monitor, the app falls back to the main wallpaper only.

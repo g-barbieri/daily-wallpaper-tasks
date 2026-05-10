@@ -7,6 +7,7 @@ from datetime import date
 import math
 from pathlib import Path
 import re
+import uuid
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -15,9 +16,13 @@ ROOT = Path(__file__).resolve().parent.parent
 CONFIG_FILE = ROOT / "config.json"
 OUTPUT_DIR = ROOT / "output"
 
-
 SECTION_PATTERN = re.compile(r"^\s{0,3}(#{2,4})\s+(.*?)\s*$")
 TASK_PATTERN = re.compile(r"^\s*[-*]\s+\[( |x|X)\]\s*(.*)$")
+
+COINIT_APARTMENTTHREADED = 0x2
+CLSCTX_LOCAL_SERVER = 0x4
+S_OK = 0
+S_FALSE = 1
 
 
 def load_config(path: Path) -> dict:
@@ -121,16 +126,6 @@ def section_grid(section_count: int) -> tuple[int, int]:
     return 3, math.ceil(section_count / 3)
 
 
-def first_open_task(sections: list[dict[str, object]]) -> str:
-    for section in sections:
-        items = section["items"]
-        assert isinstance(items, list)
-        for item in items:
-            if not bool(item["checked"]):
-                return str(item["text"])
-    return "Write the most important thing first."
-
-
 def build_wallpaper(sections: list[dict[str, object]], output_path: Path) -> Path:
     width, height = 1920, 1080
     background = "#08111f"
@@ -206,19 +201,12 @@ def build_wallpaper(sections: list[dict[str, object]], output_path: Path) -> Pat
             if y > bottom - 70:
                 break
 
-    draw.text(
-        (90, 1000),
-        "Keep the note focused: one line per task, grouped into the sections you actually use.",
-        fill=muted,
-        font=small_font,
-    )
-
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(output_path)
     return output_path
 
 
-def build_companion_wallpaper(sections: list[dict[str, object]], output_path: Path) -> Path:
+def build_companion_wallpaper(sections: list[dict[str, object]], output_path: Path, message: str) -> Path:
     width, height = 1920, 1080
     background = "#09101d"
     panel = "#0f1727"
@@ -249,15 +237,100 @@ def build_companion_wallpaper(sections: list[dict[str, object]], output_path: Pa
         y += 70
 
     draw_round_box(draw, (120, 600, width - 120, 860), "#0b1423", 32)
-    draw.text((160, 650), "One sentence for the day", fill=muted, font=small_font)
-    draw.text((160, 700), first_open_task(sections), fill=foreground, font=body_font)
+    draw.text((160, 650), "Second screen idea", fill=muted, font=small_font)
+    wrapped_message = wrap_text(draw, message, body_font, width - 360)
+    message_y = 700
+    for line in wrapped_message[:4]:
+        draw.text((160, message_y), line, fill=foreground, font=body_font)
+        message_y += 44
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(output_path)
     return output_path
 
 
-def set_wallpaper(path: Path) -> None:
+class GUID(ctypes.Structure):
+    _fields_ = [
+        ("Data1", ctypes.c_uint32),
+        ("Data2", ctypes.c_uint16),
+        ("Data3", ctypes.c_uint16),
+        ("Data4", ctypes.c_ubyte * 8),
+    ]
+
+
+def guid_from_string(value: str) -> GUID:
+    parsed = uuid.UUID(value.strip("{}"))
+    data4 = (ctypes.c_ubyte * 8)(*parsed.bytes[8:])
+    return GUID(
+        parsed.fields[0],
+        parsed.fields[1],
+        parsed.fields[2],
+        data4,
+    )
+
+
+CLSID_DesktopWallpaper = guid_from_string("{C2CF3110-460E-4FC1-B9D0-8A1C0C9CC4BD}")
+IID_IDesktopWallpaper = guid_from_string("{B92B56A9-8B55-4E14-9A89-0199BBB6F93B}")
+
+
+class IDesktopWallpaper(ctypes.Structure):
+    _fields_ = [("lpVtbl", ctypes.POINTER(ctypes.c_void_p))]
+
+
+IDesktopWallpaperPtr = ctypes.POINTER(IDesktopWallpaper)
+
+
+def com_call(obj: IDesktopWallpaperPtr, index: int, restype, argtypes, *args):
+    vtbl = obj.contents.lpVtbl
+    function = ctypes.WINFUNCTYPE(restype, *argtypes)(vtbl[index])
+    return function(obj, *args)
+
+
+def get_monitor_device_paths() -> list[str]:
+    ole32 = ctypes.windll.ole32
+    hr = ole32.CoInitialize(None)
+    obj = IDesktopWallpaperPtr()
+    try:
+        create_hr = ole32.CoCreateInstance(
+            ctypes.byref(CLSID_DesktopWallpaper),
+            None,
+            CLSCTX_LOCAL_SERVER,
+            ctypes.byref(IID_IDesktopWallpaper),
+            ctypes.byref(obj),
+        )
+        if create_hr not in (S_OK, S_FALSE) or not obj:
+            return []
+
+        count = ctypes.c_uint()
+        if com_call(obj, 3, ctypes.c_long, [IDesktopWallpaperPtr, ctypes.POINTER(ctypes.c_uint)], ctypes.byref(count)) != S_OK:
+            return []
+
+        monitor_ids: list[str] = []
+        for index in range(count.value):
+            monitor_id = ctypes.c_void_p()
+            if (
+                com_call(
+                    obj,
+                    4,
+                    ctypes.c_long,
+                    [IDesktopWallpaperPtr, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p)],
+                    index,
+                    ctypes.byref(monitor_id),
+                )
+                == S_OK
+                and monitor_id.value
+            ):
+                monitor_ids.append(ctypes.wstring_at(monitor_id.value))
+                ctypes.windll.ole32.CoTaskMemFree(monitor_id)
+        return monitor_ids
+    finally:
+        if obj:
+            com_call(obj, 2, ctypes.c_ulong, [IDesktopWallpaperPtr])
+        if hr in (S_OK, S_FALSE):
+            ole32.CoUninitialize()
+
+
+def set_primary_wallpaper(path: Path) -> None:
     SPI_SETDESKWALLPAPER = 20
     ctypes.windll.user32.SystemParametersInfoW(
         SPI_SETDESKWALLPAPER,
@@ -265,6 +338,51 @@ def set_wallpaper(path: Path) -> None:
         str(path),
         3,
     )
+
+
+def set_monitor_wallpapers(primary_path: Path, companion_path: Path | None) -> None:
+    monitor_ids = get_monitor_device_paths()
+    if len(monitor_ids) < 2 or companion_path is None:
+        set_primary_wallpaper(primary_path)
+        return
+
+    ole32 = ctypes.windll.ole32
+    hr = ole32.CoInitialize(None)
+    obj = IDesktopWallpaperPtr()
+    try:
+        create_hr = ole32.CoCreateInstance(
+            ctypes.byref(CLSID_DesktopWallpaper),
+            None,
+            CLSCTX_LOCAL_SERVER,
+            ctypes.byref(IID_IDesktopWallpaper),
+            ctypes.byref(obj),
+        )
+        if create_hr != S_OK or not obj:
+            set_primary_wallpaper(primary_path)
+            return
+
+        com_call(
+            obj,
+            6,
+            ctypes.c_long,
+            [IDesktopWallpaperPtr, ctypes.c_wchar_p, ctypes.c_wchar_p],
+            monitor_ids[0],
+            str(primary_path),
+        )
+        for monitor_id in monitor_ids[1:]:
+            com_call(
+                obj,
+                6,
+                ctypes.c_long,
+                [IDesktopWallpaperPtr, ctypes.c_wchar_p, ctypes.c_wchar_p],
+                monitor_id,
+                str(companion_path),
+            )
+    finally:
+        if obj:
+            com_call(obj, 2, ctypes.c_ulong, [IDesktopWallpaperPtr])
+        if hr in (S_OK, S_FALSE):
+            ole32.CoUninitialize()
 
 
 def main() -> int:
@@ -275,6 +393,7 @@ def main() -> int:
 
     config = load_config(CONFIG_FILE)
     note_path = Path(args.note_path) if args.note_path else resolve_daily_note(config)
+    companion_message = config.get("companion_message", "Add your second-screen idea here.")
     sections = load_sections_from_note(
         note_path,
         config.get("note_headings", ["Priorities", "Errands", "Today"]),
@@ -283,10 +402,10 @@ def main() -> int:
     primary_path = OUTPUT_DIR / "today-main.png"
     companion_path = OUTPUT_DIR / "today-companion.png"
     build_wallpaper(sections, primary_path)
-    build_companion_wallpaper(sections, companion_path)
+    build_companion_wallpaper(sections, companion_path, companion_message)
 
     if args.set_wallpaper:
-        set_wallpaper(primary_path)
+        set_monitor_wallpapers(primary_path, companion_path)
 
     return 0
 
